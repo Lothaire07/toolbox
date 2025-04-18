@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Recall Trainer</title>
+  <style>
+    body {
+      font-family: "Fira Code", monospace;
+      margin: 2rem;
+      background-color: #1e1e1e;
+      color: #d4d4d4;
+    }
+    #container {
+      max-width: 800px;
+      margin: auto;
+      padding: 1rem;
+      background-color: #252526;
+      border-radius: 8px;
+      border: 1px solid #333;
+      box-shadow: none;
+    }
+    textarea {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      overflow: hidden;
+    }
+    .hint {
+      color: #666;
+      font-style: italic;
+      margin-top: 0.5rem;
+    }
+    .success { color: green; }
+    .error { color: red; }
+    #lineProgressContainer {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 20px;
+    }
+    .line-visual {
+      display: inline-block;
+      height: 24px;
+      background-color: #2d2d2d;
+      position: relative;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    .line-visual .fill {
+      background-color: #0e639c;
+      height: 100%;
+      width: 0%;
+    }
+    .line-visual.active {
+      outline: 2px solid #0e639c;
+    }
+    @keyframes blink {
+      50% {
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h2>🧠 Recall Trainer</h2>
+    <p>Retape la ligne suivante :</p>
+    <input type="file" id="fileInput" accept=".txt,.py" />
+    <textarea id="input" autofocus spellcheck="false" tabindex="0"></textarea>
+    <div id="feedback"></div>
+    <div class="hint" id="hint"></div>
+    <div id="lineProgressContainer"></div>
+  </div>
+
+  <script>
+    let lines = [];
+    let current = 0;
+    let errors = 0;
+    let hintLevel = 0;
+
+    const feedback = document.getElementById("feedback");
+    const hint = document.getElementById("hint");
+
+   function updatePrompt() {
+  feedback.textContent = "";
+  hint.textContent = "";
+  errors = 0;
+  hintLevel = 0;
+  if (lines.length === 0 || current >= lines.length) {
+    feedback.textContent = "🎉 Bien joué ! Tu as terminé.";
+    return;
+  }
+
+  const container = document.getElementById("lineProgressContainer");
+  container.innerHTML = "";
+  const lineCount = document.createElement("div");
+  lineCount.textContent = `${lines.length} lignes`;
+  lineCount.style.color = "#ccc";
+  lineCount.style.marginBottom = "10px";
+  container.appendChild(lineCount);
+
+  lines.forEach((line, index) => {
+    if (line.trim() === "" && line !== lines[current]) return;
+
+    const wrapper = document.createElement("div");
+
+    // 1) Identifier l'espace initial (espaces, tabulations, etc.)
+    const leadingWhitespaceMatch = line.match(/^(\s*)/);
+    let leadingWhitespace = leadingWhitespaceMatch ? leadingWhitespaceMatch[1] : "";
+
+    // Convertir les tabulations de l'indentation en 4 espaces
+    leadingWhitespace = leadingWhitespace.replace(/\t/g, "    ");
+
+    // 2) Extraire le texte principal en retirant l'indentation d'origine
+    const lineAfterLeading = line.slice(leadingWhitespaceMatch ? leadingWhitespaceMatch[1].length : 0);
+    // Convertir toutes les tabulations du texte principal en 4 espaces
+    const textWithoutLeadingWhitespace = lineAfterLeading.replace(/\t/g, "    ");
+
+    // 3) Mesurer la largeur du texte sans l'indentation
+    const tempSpan = document.createElement("span");
+    tempSpan.textContent = textWithoutLeadingWhitespace;
+    tempSpan.style.visibility = "hidden";
+    tempSpan.style.position = "absolute";
+    tempSpan.style.whiteSpace = "pre";
+    tempSpan.style.fontFamily = "monospace";
+    tempSpan.style.fontSize = "14px";
+    document.body.appendChild(tempSpan);
+    let textWidth = tempSpan.offsetWidth;
+    document.body.removeChild(tempSpan);
+
+    // Forcer une largeur minimale pour éviter qu'une ligne vide ou trop courte ne disparaisse
+    if (textWidth < 20) textWidth = 20;
+
+    // 4) Mesurer la largeur de l'indentation en pixels
+    const indentSpan = document.createElement("span");
+    indentSpan.textContent = leadingWhitespace;
+    indentSpan.style.visibility = "hidden";
+    indentSpan.style.position = "absolute";
+    indentSpan.style.whiteSpace = "pre";
+    indentSpan.style.fontFamily = "monospace";
+    indentSpan.style.fontSize = "14px";
+    document.body.appendChild(indentSpan);
+    const indentWidth = indentSpan.offsetWidth;
+    document.body.removeChild(indentSpan);
+
+    // 5) Appliquer l'indentation visuelle (margin-left) et la largeur du rectangle (texte uniquement)
+    wrapper.style.marginLeft = `${indentWidth}px`;
+    wrapper.style.width = `${textWidth}px`;
+    wrapper.style.overflow = "visible";
+
+    // 6) Ajouter la classe "active" si c'est la ligne en cours
+    wrapper.className = "line-visual" + (index === current ? " active" : "");
+
+    // 7) Création du remplissage bleu
+    const fill = document.createElement("div");
+    fill.className = "fill";
+    // Les lignes déjà validées sont à 100%, la ligne active démarre à 0%
+    if (index < current) {
+      fill.style.width = "100%";
+    } else {
+      fill.style.width = "0%";
+    }
+
+    if (index === current) {
+      fill.id = "currentFill";
+      const overlay = document.createElement("div");
+      overlay.id = "typedTextOverlay";
+      overlay.style.position = "absolute";
+      overlay.style.zIndex = "2";
+      overlay.style.top = "0";
+      overlay.style.left = "0";
+      overlay.style.width = "auto";
+      overlay.style.minWidth = "100%";
+      overlay.style.height = "100%";
+      overlay.style.display = "flex";
+      overlay.style.alignItems = "center";
+      overlay.style.paddingLeft = "4px";
+      overlay.style.fontFamily = "monospace";
+      overlay.style.fontSize = "14px";
+      overlay.style.color = "#d4d4d4";
+
+      const span = document.createElement("span");
+      span.id = "typedText";
+      span.textContent = "";
+
+      const cursor = document.createElement("span");
+      cursor.id = "cursor";
+      cursor.textContent = "|";
+      cursor.style.marginLeft = "2px";
+      cursor.style.animation = "gameBlink 0.6s ease-in-out infinite";
+
+      wrapper.style.position = "relative";
+      // D'abord, ajoute le remplissage
+      wrapper.appendChild(fill);
+      // Puis, ajoute l'overlay pour qu'il soit au-dessus
+      overlay.appendChild(span);
+      overlay.appendChild(cursor);
+      wrapper.appendChild(overlay);
+    } else {
+      wrapper.appendChild(fill);
+    }
+    container.appendChild(wrapper);
+  });
+}
+
+    function updateCursorPosition() {
+      const input = document.getElementById("input");
+      const typedSpan = document.getElementById("typedText");
+      const cursor = document.getElementById("cursor");
+
+      if (!cursor || !typedSpan) return;
+
+      const cursorIndex = input.selectionStart;
+      const textBeforeCursor = input.value.substring(0, cursorIndex);
+
+      const tempSpan = document.createElement("span");
+      tempSpan.textContent = textBeforeCursor;
+
+      const style = window.getComputedStyle(typedSpan);
+      tempSpan.style.visibility = "hidden";
+      tempSpan.style.position = "absolute";
+      tempSpan.style.whiteSpace = "pre";
+      tempSpan.style.fontFamily = style.fontFamily;
+      tempSpan.style.fontSize = style.fontSize;
+      tempSpan.style.fontWeight = style.fontWeight;
+      tempSpan.style.letterSpacing = style.letterSpacing;
+
+      typedSpan.parentNode.appendChild(tempSpan);
+
+      const offsetLeft = tempSpan.offsetWidth;
+      cursor.style.position = "absolute";
+      cursor.style.left = `${offsetLeft}px`;
+
+      tempSpan.remove();
+    }
+
+    document.getElementById("input").addEventListener("keydown", function (e) {
+      const input = e.target;
+      const val = input.value;
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+
+      const pairs = {
+        "(": ")",
+        "[": "]",
+        "{": "}",
+        "'": "'",
+        '"': '"'
+      };
+
+      if (pairs[e.key]) {
+        e.preventDefault();
+        const insert = e.key + pairs[e.key];
+        input.value = val.slice(0, start) + insert + val.slice(end);
+        input.selectionStart = input.selectionEnd = start + 1;
+        input.dispatchEvent(new Event("input"));
+      }
+
+      if (e.key === "Backspace" && start > 0) {
+        const prev = val[start - 1];
+        const next = val[start];
+        if (pairs[prev] && next === pairs[prev]) {
+          e.preventDefault();
+          input.value = val.slice(0, start - 1) + val.slice(start + 1);
+          input.selectionStart = input.selectionEnd = start - 1;
+          input.dispatchEvent(new Event("input"));
+        }
+      }
+    });
+
+    document.getElementById("input").addEventListener("input", function () {
+      const input = document.getElementById("input");
+      const fill = document.getElementById("currentFill");
+      if (fill) {
+        const expected = lines[current].replace(/\t/g, "    ");
+        const typed = input.value.replace(/\t/g, "    ");
+        if (typed === expected) {
+          feedback.textContent = "✅ Correct !";
+          const completedWrapper = document.querySelectorAll(".line-visual")[current];
+          if (completedWrapper) completedWrapper.classList.remove("active");
+          current++;
+          input.value = "";
+          setTimeout(() => {
+            feedback.textContent = "";
+            updatePrompt();
+          }, 1000);
+        } else if (input.value.trim() === "skip") {
+          feedback.textContent = `⏭️  Skipped. La ligne correcte était : ${expected}`;
+          current++;
+          input.value = "";
+          setTimeout(updatePrompt, 300);
+        } else if (input.value.trim() === "quit") {
+          feedback.textContent = "🏁 Session arrêtée.";
+          input.disabled = true;
+        } else {
+          const tempExpected = document.createElement("span");
+          tempExpected.textContent = expected.replace(/\t/g, "    ");
+          tempExpected.style.visibility = "hidden";
+          tempExpected.style.position = "absolute";
+          tempExpected.style.whiteSpace = "pre";
+          tempExpected.style.fontFamily = "monospace";
+          tempExpected.style.fontSize = "14px";
+          document.body.appendChild(tempExpected);
+          const expectedWidth = tempExpected.offsetWidth;
+          document.body.removeChild(tempExpected);
+
+          const tempTyped = document.createElement("span");
+          tempTyped.textContent = typed;
+          tempTyped.style.visibility = "hidden";
+          tempTyped.style.position = "absolute";
+          tempTyped.style.whiteSpace = "pre";
+          tempTyped.style.fontFamily = "monospace";
+          tempTyped.style.fontSize = "14px";
+          document.body.appendChild(tempTyped);
+          const typedWidth = tempTyped.offsetWidth;
+          document.body.removeChild(tempTyped);
+
+          if (errors >= 2 && typedWidth >= expectedWidth && typed !== expected) {
+            errors++;
+            hintLevel = Math.min(expected.length, hintLevel + 5);
+            const tip = expected.slice(0, hintLevel) + (hintLevel < expected.length ? "…" : "");
+            hint.textContent = `💡 Indice : ${tip}`;
+          }
+        }
+      }
+      updateCursorPosition();
+    });
+
+    document.getElementById("input").addEventListener("keyup", function () {
+      updateCursorPosition();
+    });
+
+    document.getElementById('fileInput').addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const content = e.target.result;
+        lines = content.split(/\r?\n/);
+        current = 0;
+        updatePrompt();
+      };
+      reader.readAsText(file);
+    });
+
+    document.getElementById("lineProgressContainer").addEventListener("click", function (e) {
+      document.getElementById("input").focus();
+    });
+
+    document.body.addEventListener("click", () => {
+      document.getElementById("input").focus();
+    });
+
+    updatePrompt();
+  </script>
+</body>
+</html>
